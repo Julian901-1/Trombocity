@@ -3,7 +3,7 @@
 // ============================================
 
 // Конфигурация
-const RENDER_URL = 'https://YOUR-APP-NAME.onrender.com'; // ⚠️ ЗАМЕНИТЕ НА ВАШ URL
+const RENDER_URL = 'https://trombocity.onrender.com'; // ⚠️ ЗАМЕНИТЕ НА ВАШ URL
 
 // Основная функция проверки
 function checkDonorDates() {
