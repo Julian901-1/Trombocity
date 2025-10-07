@@ -11,11 +11,10 @@ const CONFIG = {
   EMAIL: 'vokelood@gmail.com',
   PASSWORD: 'EightLifes8',
   BOT_TOKEN: '8465771110:AAH7D2ThT0RF2EbeLzkxnsvrdUkBmxQbmqc',
-  CHAT_ID: '487525838'
+  CHAT_ID: '487525838',
+  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbyMKh6Prt9Rf4nd6xmf5n-jqWxlkNg_OE6-9Zp20UUmAZqte0crFpVvonWedCYnXLTA/exec'
 };
 
-// Хранение последнего состояния дат (в памяти)
-let lastDates = new Set();
 let browser = null;
 let isChecking = false;
 
@@ -39,6 +38,36 @@ async function initBrowser() {
     console.log('[INIT] Браузер запущен');
   }
   return browser;
+}
+
+// Получить сохраненные даты из Google Sheets
+async function getSavedDates() {
+  try {
+    const response = await fetch(`${CONFIG.SHEETS_URL}?action=getDates`, {
+      method: 'GET',
+      timeout: 10000
+    });
+    const data = await response.json();
+    console.log('[SHEETS] Загружены даты:', data.dates || []);
+    return new Set(data.dates || []);
+  } catch (error) {
+    console.error('[SHEETS] Ошибка загрузки дат:', error.message);
+    return new Set();
+  }
+}
+
+// Сохранить даты в Google Sheets
+async function saveDates(dates) {
+  try {
+    await fetch(`${CONFIG.SHEETS_URL}?action=saveDates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dates: Array.from(dates) })
+    });
+    console.log('[SHEETS] Даты сохранены:', Array.from(dates));
+  } catch (error) {
+    console.error('[SHEETS] Ошибка сохранения дат:', error.message);
+  }
 }
 
 // Отправка сообщения в Telegram
@@ -87,18 +116,31 @@ async function checkDates() {
     console.log('[CHECK] Переход на страницу авторизации...');
     await page.goto(CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // Авторизация
-    console.log('[AUTH] Ввод логина и пароля...');
-    await page.type('input[name="log"]', CONFIG.EMAIL);
-    await page.type('input[name="pwd"]', CONFIG.PASSWORD);
+    // Проверяем наличие формы авторизации
+    const loginFormExists = await page.evaluate(() => {
+      return document.querySelector('input[name="log"]') !== null;
+    });
 
-    console.log('[AUTH] Клик по кнопке авторизации...');
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
-      page.click('button#wp-submit')
-    ]);
+    if (loginFormExists) {
+      // Авторизация
+      console.log('[AUTH] Форма авторизации найдена, ввод логина и пароля...');
+      await page.waitForSelector('input[name="log"]', { timeout: 5000 });
+      await page.type('input[name="log"]', CONFIG.EMAIL, { delay: 50 });
+      await page.type('input[name="pwd"]', CONFIG.PASSWORD, { delay: 50 });
+
+      console.log('[AUTH] Клик по кнопке авторизации...');
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+        page.click('button#wp-submit')
+      ]);
+    } else {
+      console.log('[AUTH] Уже авторизованы (форма не найдена)');
+    }
 
     console.log('[PARSE] Извлечение дат из таблицы...');
+
+    // Ждем появления таблицы
+    await page.waitForSelector('tr.dates-table__item', { timeout: 10000 });
 
     // Извлекаем даты с кнопками "Забронировать время"
     const availableDates = await page.evaluate(() => {
@@ -127,10 +169,13 @@ async function checkDates() {
     const currentDates = new Set(availableDates);
     console.log(`[RESULT] Найдено доступных дат: ${availableDates.length} - ${availableDates.join(', ')}`);
 
+    // Загружаем последние сохраненные даты из Google Sheets
+    const lastDates = await getSavedDates();
+
     // Сравнение с предыдущим состоянием
     const newDates = [...currentDates].filter(date => !lastDates.has(date));
 
-    if (newDates.length > 0) {
+    if (newDates.length > 0 && lastDates.size > 0) {
       console.log(`[ALERT] 🚨 Новые даты обнаружены: ${newDates.join(', ')}`);
 
       // Отправляем 3 сообщения подряд
@@ -138,12 +183,14 @@ async function checkDates() {
 
       for (let i = 0; i < 3; i++) {
         await sendTelegramMessage(message);
-        await new Promise(resolve => setTimeout(resolve, 500)); // Задержка между сообщениями
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
+    } else if (lastDates.size === 0) {
+      console.log('[INIT] Первая проверка после запуска, уведомление не отправляется');
     }
 
-    // Обновляем сохраненное состояние
-    lastDates = currentDates;
+    // Сохраняем текущие даты в Google Sheets
+    await saveDates(currentDates);
 
     const duration = Date.now() - startTime;
     console.log(`[CHECK] Проверка завершена за ${duration}ms\n`);
@@ -167,8 +214,7 @@ async function checkDates() {
 app.get('/', (req, res) => {
   res.json({
     status: 'running',
-    service: 'Trombocity Donor Monitor',
-    lastCheck: lastDates.size > 0 ? Array.from(lastDates) : 'No data yet'
+    service: 'Trombocity Donor Monitor'
   });
 });
 
