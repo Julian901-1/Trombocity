@@ -6,3 +6,6 @@ services:
     startCommand: npm start
     plan: free
     autoDeploy: true
+    envVars:
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /opt/render/.cache/puppeteer/chrome/linux-141.0.7390.54/chrome-linux64/chrome

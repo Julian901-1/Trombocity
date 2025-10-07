@@ -1,5 +1,16 @@
+==> Cloning from https://github.com/Julian901-1/Trombocity
+==> Checking out commit bac6295fe012882598e338377174e1d04af73bff in branch main
+==> Requesting Node.js version >=18.0.0
+==> Using Node.js version 24.9.0 via /opt/render/project/src/package.json
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Running build command 'npm install && npx puppeteer browsers install chrome'...
+added 187 packages, and audited 188 packages in 21s
+21 packages are looking for funding
+  run `npm fund` for details
+found 0 vulnerabilities
+chrome@141.0.7390.54 /opt/render/.cache/puppeteer/chrome/linux-141.0.7390.54/chrome-linux64/chrome
 ==> Uploading build...
-==> Uploaded in 3.5s. Compression took 1.5s
+==> Uploaded in 4.0s. Compression took 1.6s
 ==> Build successful 🎉
 ==> Deploying...
 ==> Running 'node server.js'
