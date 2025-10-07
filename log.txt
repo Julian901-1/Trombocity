@@ -1,0 +1,42 @@
+==> Uploading build...
+==> Uploaded in 3.5s. Compression took 1.5s
+==> Build successful 🎉
+==> Deploying...
+==> Running 'node server.js'
+🚀 Сервер запущен на порту 3000
+📊 Мониторинг: https://donor-mos.online/account/
+⏰ Heartbeat: каждые 5 минут
+[INIT] Запуск браузера Puppeteer...
+/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:320
+                    throw new Error(`Could not find Chrome (ver. ${this.puppeteer.browserVersion}). This can occur if either\n` +
+                          ^
+Error: Could not find Chrome (ver. 141.0.7390.54). This can occur if either
+ 1. you did not perform an installation before running the script (e.g. `npx puppeteer browsers install chrome`) or
+ 2. your cache path is incorrectly configured (which is: /opt/render/.cache/puppeteer).
+For (2), check out our guide on configuring puppeteer at https://pptr.dev/guides/configuration.
+    at ChromeLauncher.resolveExecutablePath (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:320:27)
+    at ChromeLauncher.computeLaunchArguments (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/ChromeLauncher.js:93:24)
+    at async ChromeLauncher.launch (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:84:28)
+    at async initBrowser (/opt/render/project/src/server.js:26:15)
+    at async Server.<anonymous> (/opt/render/project/src/server.js:204:3)
+Node.js v24.9.0
+==> Exited with status 1
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+==> Running 'node server.js'
+🚀 Сервер запущен на порту 3000
+📊 Мониторинг: https://donor-mos.online/account/
+⏰ Heartbeat: каждые 5 минут
+[INIT] Запуск браузера Puppeteer...
+/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:320
+                    throw new Error(`Could not find Chrome (ver. ${this.puppeteer.browserVersion}). This can occur if either\n` +
+                          ^
+Error: Could not find Chrome (ver. 141.0.7390.54). This can occur if either
+ 1. you did not perform an installation before running the script (e.g. `npx puppeteer browsers install chrome`) or
+ 2. your cache path is incorrectly configured (which is: /opt/render/.cache/puppeteer).
+For (2), check out our guide on configuring puppeteer at https://pptr.dev/guides/configuration.
+    at ChromeLauncher.resolveExecutablePath (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:320:27)
+    at ChromeLauncher.computeLaunchArguments (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/ChromeLauncher.js:93:24)
+    at async ChromeLauncher.launch (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:84:28)
+    at async initBrowser (/opt/render/project/src/server.js:26:15)
+    at async Server.<anonymous> (/opt/render/project/src/server.js:204:3)
+Node.js v24.9.0
