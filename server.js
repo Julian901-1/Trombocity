@@ -16,9 +16,10 @@ const CONFIG = {
 };
 
 let browser = null;
+let page = null;
 let isChecking = false;
 
-// Инициализация браузера (переиспользуем для экономии памяти)
+// Инициализация браузера (одна сессия на весь процесс)
 async function initBrowser() {
   if (!browser) {
     console.log('[INIT] Запуск браузера Puppeteer...');
@@ -32,12 +33,41 @@ async function initBrowser() {
         '--disable-gpu',
         '--no-first-run',
         '--no-zygote',
-        '--single-process'
+        '--single-process',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-sync',
+        '--metrics-recording-only',
+        '--mute-audio',
+        '--no-default-browser-check',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
       ]
     });
     console.log('[INIT] Браузер запущен');
   }
-  return browser;
+
+  // Создаем одну переиспользуемую страницу
+  if (!page || page.isClosed()) {
+    console.log('[INIT] Создание новой страницы...');
+    page = await browser.newPage();
+
+    // Оптимизация: отключаем загрузку изображений, CSS, шрифтов
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
+    console.log('[INIT] Страница готова');
+  }
+
+  return { browser, page };
 }
 
 // Получить сохраненные даты из Google Sheets
@@ -100,38 +130,28 @@ async function checkDates() {
   const startTime = Date.now();
 
   try {
-    const browser = await initBrowser();
-    const page = await browser.newPage();
-
-    // Оптимизация: отключаем загрузку изображений и CSS
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
+    // Используем одну переиспользуемую страницу
+    const { browser: browserInstance, page: pageInstance } = await initBrowser();
 
     console.log('[CHECK] Переход на страницу авторизации...');
-    await page.goto(CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await pageInstance.goto(CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Проверяем наличие формы авторизации
-    const loginFormExists = await page.evaluate(() => {
+    const loginFormExists = await pageInstance.evaluate(() => {
       return document.querySelector('input[name="log"]') !== null;
     });
 
     if (loginFormExists) {
       // Авторизация
       console.log('[AUTH] Форма авторизации найдена, ввод логина и пароля...');
-      await page.waitForSelector('input[name="log"]', { timeout: 5000 });
-      await page.type('input[name="log"]', CONFIG.EMAIL, { delay: 50 });
-      await page.type('input[name="pwd"]', CONFIG.PASSWORD, { delay: 50 });
+      await pageInstance.waitForSelector('input[name="log"]', { timeout: 5000 });
+      await pageInstance.type('input[name="log"]', CONFIG.EMAIL, { delay: 50 });
+      await pageInstance.type('input[name="pwd"]', CONFIG.PASSWORD, { delay: 50 });
 
       console.log('[AUTH] Клик по кнопке авторизации...');
       await Promise.all([
-        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
-        page.click('button#wp-submit')
+        pageInstance.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+        pageInstance.click('button#wp-submit')
       ]);
     } else {
       console.log('[AUTH] Уже авторизованы (форма не найдена)');
@@ -140,10 +160,10 @@ async function checkDates() {
     console.log('[PARSE] Извлечение дат из таблицы...');
 
     // Ждем появления таблицы
-    await page.waitForSelector('tr.dates-table__item', { timeout: 10000 });
+    await pageInstance.waitForSelector('tr.dates-table__item', { timeout: 10000 });
 
     // Извлекаем даты с кнопками "Забронировать время"
-    const availableDates = await page.evaluate(() => {
+    const availableDates = await pageInstance.evaluate(() => {
       const dates = [];
       const rows = document.querySelectorAll('tr.dates-table__item');
 
@@ -164,7 +184,7 @@ async function checkDates() {
       return dates;
     });
 
-    await page.close();
+    // НЕ закрываем страницу - переиспользуем её!
 
     const currentDates = new Set(availableDates);
     console.log(`[RESULT] Найдено доступных дат: ${availableDates.length} - ${availableDates.join(', ')}`);
@@ -261,8 +281,17 @@ app.listen(PORT, async () => {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('[SHUTDOWN] Получен SIGTERM, закрытие браузера...');
+  if (page && !page.isClosed()) {
+    await page.close();
+  }
   if (browser) {
     await browser.close();
   }
   process.exit(0);
 });
+
+// Мониторинг памяти каждые 10 минут
+setInterval(() => {
+  const memUsage = process.memoryUsage();
+  console.log(`[MEMORY] RSS: ${Math.round(memUsage.rss / 1024 / 1024)}MB, Heap: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`);
+}, 10 * 60 * 1000);
