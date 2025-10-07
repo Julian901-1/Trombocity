@@ -2,10 +2,12 @@ services:
   - type: web
     name: trombocity-monitor
     env: node
-    buildCommand: npm install && npx puppeteer browsers install chrome
+    buildCommand: npm install && PUPPETEER_CACHE_DIR=/opt/render/project/src/.cache npx puppeteer browsers install chrome
     startCommand: npm start
     plan: free
     autoDeploy: true
     envVars:
+      - key: PUPPETEER_CACHE_DIR
+        value: /opt/render/project/src/.cache
       - key: PUPPETEER_EXECUTABLE_PATH
-        value: /opt/render/.cache/puppeteer/chrome/linux-141.0.7390.54/chrome-linux64/chrome
+        value: /opt/render/project/src/.cache/chrome/linux-141.0.7390.54/chrome-linux64/chrome

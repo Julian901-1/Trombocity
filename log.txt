@@ -1,16 +1,16 @@
 ==> Cloning from https://github.com/Julian901-1/Trombocity
-==> Checking out commit bac6295fe012882598e338377174e1d04af73bff in branch main
+==> Checking out commit fe00a17144a8fa72b56f8778a41949b9e32db4ec in branch main
 ==> Requesting Node.js version >=18.0.0
 ==> Using Node.js version 24.9.0 via /opt/render/project/src/package.json
 ==> Docs on specifying a Node.js version: https://render.com/docs/node-version
 ==> Running build command 'npm install && npx puppeteer browsers install chrome'...
-added 187 packages, and audited 188 packages in 21s
+added 187 packages, and audited 188 packages in 16s
 21 packages are looking for funding
   run `npm fund` for details
 found 0 vulnerabilities
 chrome@141.0.7390.54 /opt/render/.cache/puppeteer/chrome/linux-141.0.7390.54/chrome-linux64/chrome
 ==> Uploading build...
-==> Uploaded in 4.0s. Compression took 1.6s
+==> Uploaded in 9.0s. Compression took 2.0s
 ==> Build successful 🎉
 ==> Deploying...
 ==> Running 'node server.js'
@@ -18,18 +18,13 @@ chrome@141.0.7390.54 /opt/render/.cache/puppeteer/chrome/linux-141.0.7390.54/chr
 📊 Мониторинг: https://donor-mos.online/account/
 ⏰ Heartbeat: каждые 5 минут
 [INIT] Запуск браузера Puppeteer...
-/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:320
-                    throw new Error(`Could not find Chrome (ver. ${this.puppeteer.browserVersion}). This can occur if either\n` +
-                          ^
-Error: Could not find Chrome (ver. 141.0.7390.54). This can occur if either
- 1. you did not perform an installation before running the script (e.g. `npx puppeteer browsers install chrome`) or
- 2. your cache path is incorrectly configured (which is: /opt/render/.cache/puppeteer).
-For (2), check out our guide on configuring puppeteer at https://pptr.dev/guides/configuration.
-    at ChromeLauncher.resolveExecutablePath (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:320:27)
-    at ChromeLauncher.computeLaunchArguments (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/ChromeLauncher.js:93:24)
-    at async ChromeLauncher.launch (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:84:28)
+/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:89
+            throw new Error(`Browser was not found at the configured executablePath (${launchArgs.executablePath})`);
+                  ^
+Error: Browser was not found at the configured executablePath (/opt/render/.cache/puppeteer/chrome/linux-141.0.7390.54/chrome-linux64/chrome)
+    at ChromeLauncher.launch (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:89:19)
     at async initBrowser (/opt/render/project/src/server.js:26:15)
-    at async Server.<anonymous> (/opt/render/project/src/server.js:204:3)
+    at async Server.<anonymous> (/opt/render/project/src/server.js:205:3)
 Node.js v24.9.0
 ==> Exited with status 1
 ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
@@ -38,16 +33,11 @@ Node.js v24.9.0
 📊 Мониторинг: https://donor-mos.online/account/
 ⏰ Heartbeat: каждые 5 минут
 [INIT] Запуск браузера Puppeteer...
-/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:320
-                    throw new Error(`Could not find Chrome (ver. ${this.puppeteer.browserVersion}). This can occur if either\n` +
-                          ^
-Error: Could not find Chrome (ver. 141.0.7390.54). This can occur if either
- 1. you did not perform an installation before running the script (e.g. `npx puppeteer browsers install chrome`) or
- 2. your cache path is incorrectly configured (which is: /opt/render/.cache/puppeteer).
-For (2), check out our guide on configuring puppeteer at https://pptr.dev/guides/configuration.
-    at ChromeLauncher.resolveExecutablePath (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:320:27)
-    at ChromeLauncher.computeLaunchArguments (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/ChromeLauncher.js:93:24)
-    at async ChromeLauncher.launch (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:84:28)
+/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:89
+            throw new Error(`Browser was not found at the configured executablePath (${launchArgs.executablePath})`);
+                  ^
+Error: Browser was not found at the configured executablePath (/opt/render/.cache/puppeteer/chrome/linux-141.0.7390.54/chrome-linux64/chrome)
+    at ChromeLauncher.launch (/opt/render/project/src/node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserLauncher.js:89:19)
     at async initBrowser (/opt/render/project/src/server.js:26:15)
-    at async Server.<anonymous> (/opt/render/project/src/server.js:204:3)
+    at async Server.<anonymous> (/opt/render/project/src/server.js:205:3)
 Node.js v24.9.0
