@@ -502,11 +502,26 @@ async function checkDates() {
         // Кликаем по кнопке (не submit, чтобы сработали обработчики)
         await pageInstance.click('button#wp-submit');
 
-        console.log('[AUTH] Форма отправлена, ожидание появления капчи (5 секунд)...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        console.log('[AUTH] Форма отправлена, ожидание появления капчи (до 15 секунд)...');
+
+        // Ждём появления sitekey в HTML (проверяем каждые 2 секунды)
+        let htmlAfterSubmit;
+        let sitekeyMatches = null;
+        for (let i = 0; i < 8; i++) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          htmlAfterSubmit = await pageInstance.evaluate(() => document.documentElement.outerHTML);
+          sitekeyMatches = htmlAfterSubmit.match(/sitekey['":\s=]+['"]?([a-zA-Z0-9_-]+)['"]?/gi);
+
+          if (sitekeyMatches && sitekeyMatches.length > 0) {
+            console.log(`[AUTH] ✅ Sitekey найден после ${(i + 1) * 2} секунд ожидания`);
+            break;
+          }
+
+          console.log(`[AUTH] Sitekey не найден, ожидание... (${(i + 1) * 2}/16 секунд)`);
+        }
 
         // Логируем HTML после клика - теперь капча должна быть
-        const htmlAfterSubmit = await pageInstance.evaluate(() => document.documentElement.outerHTML);
         console.log('[DEBUG] ========== HTML ПОСЛЕ ОТПРАВКИ (поиск капчи, 3000 символов) ==========');
         const captchaFragment = htmlAfterSubmit.substring(
           Math.max(0, htmlAfterSubmit.indexOf('smartcaptcha') - 500),
@@ -516,23 +531,43 @@ async function checkDates() {
         console.log('[DEBUG] ===============================================================');
 
         // Ищем sitekey в HTML после отправки
-        const sitekeyMatches = htmlAfterSubmit.match(/sitekey['":\s=]+['"]?([a-zA-Z0-9_-]+)['"]?/gi);
         console.log('[DEBUG] Найденные упоминания sitekey после отправки:', sitekeyMatches);
 
-        // Теперь пытаемся решить капчу
-        console.log('[AUTH] Решение Yandex SmartCaptcha через 2Captcha API...');
-        const captchaSolved = await solveCaptcha(pageInstance);
+        // Проверяем, появилась ли капча
+        if (!sitekeyMatches || sitekeyMatches.length === 0) {
+          console.log('[AUTH] ⚠️ Капча не появилась. Возможно, авторизация прошла без капчи или используются cookies.');
+          console.log('[AUTH] Проверка наличия account-info блока...');
 
-        if (!captchaSolved) {
-          console.log('[ERROR] Не удалось решить капчу');
-          isLoggedIn = false;
-          throw new Error('Failed to solve captcha');
+          // Проверяем, может авторизация уже прошла
+          const hasAccountInfo = await pageInstance.evaluate(() => {
+            return document.querySelector('.account-info') !== null;
+          });
+
+          if (hasAccountInfo) {
+            console.log('[AUTH] ✅ Авторизация успешна без капчи (используются cookies)');
+            isLoggedIn = true;
+            // Переходим к проверке таблицы (пропускаем решение капчи)
+          } else {
+            console.log('[ERROR] Авторизация не удалась - капча не появилась, account-info не найден');
+            isLoggedIn = false;
+            throw new Error('Captcha not loaded and authentication failed');
+          }
+        } else {
+          // Капча появилась, решаем её
+          console.log('[AUTH] Решение Yandex SmartCaptcha через 2Captcha API...');
+          const captchaSolved = await solveCaptcha(pageInstance);
+
+          if (!captchaSolved) {
+            console.log('[ERROR] Не удалось решить капчу');
+            isLoggedIn = false;
+            throw new Error('Failed to solve captcha');
+          }
+
+          console.log('[CAPTCHA] ✅ Капча успешно решена, повторная отправка формы...');
+
+          // Отправляем форму снова с токеном капчи
+          await pageInstance.click('button#wp-submit');
         }
-
-        console.log('[CAPTCHA] ✅ Капча успешно решена, повторная отправка формы...');
-
-        // Отправляем форму снова с токеном капчи
-        await pageInstance.click('button#wp-submit');
 
         console.log('[AUTH] Ожидание загрузки личного кабинета (5 секунд)...');
         await new Promise(resolve => setTimeout(resolve, 5000));
