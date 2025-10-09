@@ -249,7 +249,8 @@ async function login() {
       return false;
     }
 
-    // Вставляем токен
+    // Вставляем токен и отправляем форму напрямую
+    console.log('[AUTH] Вставка токена и отправка формы');
     await page.evaluate((token) => {
       let input = document.querySelector('input[name="smart-token"]');
       if (!input) {
@@ -259,18 +260,14 @@ async function login() {
         document.querySelector('form').appendChild(input);
       }
       input.value = token;
+
+      // Отправляем форму напрямую через submit() вместо клика по кнопке
+      const form = document.querySelector('form');
+      if (form) {
+        form.submit();
+      }
     }, token);
 
-    // Проверяем кнопку перед повторным кликом
-    const buttonExists = await page.$('button#wp-submit');
-    if (!buttonExists) {
-      console.log('[AUTH] ❌ Кнопка исчезла после решения капчи');
-      return false;
-    }
-
-    // Повторная отправка формы с токеном
-    console.log('[AUTH] Повторная отправка с токеном');
-    await page.click('button#wp-submit');
     await new Promise(resolve => setTimeout(resolve, 3000));
   }
 
