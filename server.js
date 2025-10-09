@@ -463,21 +463,30 @@ async function checkDates() {
         });
         console.log('[AUTH] Информация о кнопке:', JSON.stringify(buttonInfo));
 
-        // Даём время для загрузки Yandex SmartCaptcha (она загружается асинхронно)
-        console.log('[AUTH] Ожидание загрузки Yandex SmartCaptcha (5 секунд)...');
+        // НОВЫЙ ПОДХОД: Сначала отправляем форму, ПОТОМ капча появится
+        console.log('[AUTH] Отправка формы (капча появится после отправки)...');
+
+        // Кликаем по кнопке (не submit, чтобы сработали обработчики)
+        await pageInstance.click('button#wp-submit');
+
+        console.log('[AUTH] Форма отправлена, ожидание появления капчи (5 секунд)...');
         await new Promise(resolve => setTimeout(resolve, 5000));
 
-        // Логируем полный HTML для поиска sitekey
-        const fullHtml = await pageInstance.evaluate(() => document.documentElement.outerHTML);
-        console.log('[DEBUG] ========== ПОЛНЫЙ HTML страницы (первые 5000 символов) ==========');
-        console.log(fullHtml.substring(0, 5000));
+        // Логируем HTML после клика - теперь капча должна быть
+        const htmlAfterSubmit = await pageInstance.evaluate(() => document.documentElement.outerHTML);
+        console.log('[DEBUG] ========== HTML ПОСЛЕ ОТПРАВКИ (поиск капчи, 3000 символов) ==========');
+        const captchaFragment = htmlAfterSubmit.substring(
+          Math.max(0, htmlAfterSubmit.indexOf('smartcaptcha') - 500),
+          htmlAfterSubmit.indexOf('smartcaptcha') + 2500
+        );
+        console.log(captchaFragment || htmlAfterSubmit.substring(0, 3000));
         console.log('[DEBUG] ===============================================================');
 
-        // Ищем все упоминания sitekey в HTML
-        const sitekeyMatches = fullHtml.match(/sitekey['":\s=]+['"]?([a-zA-Z0-9_-]+)['"]?/gi);
-        console.log('[DEBUG] Найденные упоминания sitekey:', sitekeyMatches);
+        // Ищем sitekey в HTML после отправки
+        const sitekeyMatches = htmlAfterSubmit.match(/sitekey['":\s=]+['"]?([a-zA-Z0-9_-]+)['"]?/gi);
+        console.log('[DEBUG] Найденные упоминания sitekey после отправки:', sitekeyMatches);
 
-        // Всегда пытаемся решить капчу, т.к. она присутствует, но загружается динамически
+        // Теперь пытаемся решить капчу
         console.log('[AUTH] Решение Yandex SmartCaptcha через 2Captcha API...');
         const captchaSolved = await solveCaptcha(pageInstance);
 
@@ -487,33 +496,10 @@ async function checkDates() {
           throw new Error('Failed to solve captcha');
         }
 
-        console.log('[CAPTCHA] ✅ Капча успешно решена');
-        // Даём время для обработки токена
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log('[CAPTCHA] ✅ Капча успешно решена, повторная отправка формы...');
 
-        console.log('[AUTH] Отправка формы...');
-
-        // Пытаемся отправить форму напрямую через JavaScript
-        const formSubmitted = await pageInstance.evaluate(() => {
-          const form = document.querySelector('form');
-          if (form) {
-            // Удаляем все обработчики событий submit (включая валидацию капчи)
-            const newForm = form.cloneNode(true);
-            form.parentNode.replaceChild(newForm, form);
-
-            // Отправляем форму
-            newForm.submit();
-            return true;
-          }
-          return false;
-        });
-
-        if (formSubmitted) {
-          console.log('[AUTH] Форма отправлена через JavaScript');
-        } else {
-          console.log('[AUTH] Не удалось найти форму, используем клик по кнопке');
-          await pageInstance.click('button#wp-submit');
-        }
+        // Отправляем форму снова с токеном капчи
+        await pageInstance.click('button#wp-submit');
 
         console.log('[AUTH] Ожидание загрузки личного кабинета (5 секунд)...');
         await new Promise(resolve => setTimeout(resolve, 5000));
