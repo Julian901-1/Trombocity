@@ -60,6 +60,22 @@ async function initBrowser() {
     console.log('[INIT] Создание новой страницы...');
     page = await browser.newPage();
 
+    // Загружаем cookies из Google Sheets (если есть)
+    try {
+      const savedCookiesResponse = await fetch(`${CONFIG.SHEETS_URL}?action=getCookies`, {
+        method: 'GET',
+        timeout: 5000
+      });
+      const cookiesData = await savedCookiesResponse.json();
+
+      if (cookiesData.cookies && cookiesData.cookies.length > 0) {
+        await page.setCookie(...cookiesData.cookies);
+        console.log(`[INIT] ✅ Загружено ${cookiesData.cookies.length} cookies из хранилища`);
+      }
+    } catch (e) {
+      console.log('[INIT] Cookies не найдены или ошибка загрузки (норма для первого запуска)');
+    }
+
     // Оптимизация: отключаем загрузку изображений, CSS, шрифтов
     await page.setRequestInterception(true);
     page.on('request', (req) => {
@@ -74,6 +90,21 @@ async function initBrowser() {
   }
 
   return { browser, page };
+}
+
+// Сохранить cookies в Google Sheets
+async function saveCookies(pageInstance) {
+  try {
+    const cookies = await pageInstance.cookies();
+    await fetch(`${CONFIG.SHEETS_URL}?action=saveCookies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookies })
+    });
+    console.log(`[COOKIES] Сохранено ${cookies.length} cookies`);
+  } catch (error) {
+    console.error('[COOKIES] Ошибка сохранения:', error.message);
+  }
 }
 
 // Получить сохраненные даты из Google Sheets
@@ -125,7 +156,7 @@ async function sendTelegramMessage(text) {
   }
 }
 
-// Решение reCAPTCHA через 2Captcha API
+// Решение CAPTCHA через 2Captcha API (reCAPTCHA + Yandex SmartCaptcha)
 async function solveCaptcha(pageInstance) {
   if (!solver) {
     console.log('[CAPTCHA] 2Captcha API ключ не настроен, пропускаем решение');
@@ -133,10 +164,24 @@ async function solveCaptcha(pageInstance) {
   }
 
   try {
-    console.log('[CAPTCHA] Поиск site-key для reCAPTCHA...');
+    console.log('[CAPTCHA] Поиск капчи на странице...');
 
-    // Получаем site-key из iframe или data-атрибута
+    // Получаем информацию о капче
     const captchaInfo = await pageInstance.evaluate(() => {
+      // Yandex SmartCaptcha
+      if (document.querySelector('script[src*="smartcaptcha.yandexcloud.net"]')) {
+        const captchaDiv = document.querySelector('[data-sitekey]') ||
+                          document.querySelector('#captcha-container');
+        if (captchaDiv && captchaDiv.getAttribute('data-sitekey')) {
+          return {
+            siteKey: captchaDiv.getAttribute('data-sitekey'),
+            type: 'yandex'
+          };
+        }
+        return { siteKey: null, type: 'yandex' };
+      }
+
+      // reCAPTCHA v2
       const iframe = document.querySelector('iframe[src*="recaptcha"]');
       if (iframe) {
         const src = iframe.getAttribute('src');
@@ -155,7 +200,24 @@ async function solveCaptcha(pageInstance) {
       return null;
     });
 
-    if (!captchaInfo || !captchaInfo.siteKey) {
+    if (!captchaInfo) {
+      console.log('[CAPTCHA] Капча не обнаружена');
+      return false;
+    }
+
+    console.log(`[CAPTCHA] Тип капчи: ${captchaInfo.type}`);
+
+    if (captchaInfo.type === 'yandex') {
+      console.log('[CAPTCHA] ⚠️ Yandex SmartCaptcha обнаружена');
+      console.log('[CAPTCHA] 2Captcha не поддерживает Yandex SmartCaptcha напрямую');
+      console.log('[CAPTCHA] Стратегия: используем задержку и надежду на отсутствие блокировки');
+
+      // Просто ждём - возможно форма отправится без решения капчи
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return false; // Возвращаем false, чтобы попытаться другой способ
+    }
+
+    if (!captchaInfo.siteKey) {
       console.log('[CAPTCHA] Site-key не найден');
       return false;
     }
@@ -163,7 +225,7 @@ async function solveCaptcha(pageInstance) {
     console.log(`[CAPTCHA] Site-key найден: ${captchaInfo.siteKey}`);
     console.log('[CAPTCHA] Отправка задачи на решение (может занять 15-30 секунд)...');
 
-    // Отправляем капчу на решение
+    // Отправляем reCAPTCHA на решение
     const result = await solver.recaptcha({
       pageurl: pageInstance.url(),
       googlekey: captchaInfo.siteKey
@@ -173,21 +235,17 @@ async function solveCaptcha(pageInstance) {
 
     // Вставляем токен на страницу
     await pageInstance.evaluate((token) => {
-      // Заполняем скрытое поле g-recaptcha-response
       const textarea = document.querySelector('#g-recaptcha-response');
       if (textarea) {
         textarea.innerHTML = token;
       }
 
-      // Вызываем callback если есть
       if (window.grecaptcha && typeof window.grecaptcha.getResponse === 'function') {
         window.___grecaptcha_cfg.clients[0].callback(token);
       }
     }, result.data);
 
     console.log('[CAPTCHA] Токен вставлен на страницу');
-
-    // Небольшая задержка перед продолжением
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     return true;
@@ -350,6 +408,9 @@ async function checkDates() {
 
           console.log(`[AUTH] Информация об аккаунте: ${accountInfo.substring(0, 100)}`);
           isLoggedIn = true;
+
+          // Сохраняем cookies после успешной авторизации
+          await saveCookies(pageInstance);
 
         } catch (authError) {
           console.log('[AUTH] Не удалось дождаться загрузки личного кабинета');
