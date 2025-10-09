@@ -173,19 +173,51 @@ async function solveCaptcha(pageInstance) {
   try {
     console.log('[CAPTCHA] Поиск капчи на странице...');
 
+    // Логируем HTML для отладки
+    const pageHtml = await pageInstance.evaluate(() => document.documentElement.outerHTML);
+    console.log('[DEBUG] ========== HTML страницы (фрагмент для поиска капчи) ==========');
+    const captchaFragment = pageHtml.substring(
+      Math.max(0, pageHtml.indexOf('smartcaptcha') - 500),
+      pageHtml.indexOf('smartcaptcha') + 1000
+    );
+    console.log(captchaFragment || 'smartcaptcha не найден в HTML');
+    console.log('[DEBUG] ===============================================================');
+
     // Получаем информацию о капче
     const captchaInfo = await pageInstance.evaluate(() => {
-      // Yandex SmartCaptcha
-      if (document.querySelector('script[src*="smartcaptcha.yandexcloud.net"]')) {
-        const captchaDiv = document.querySelector('[data-sitekey]') ||
-                          document.querySelector('#captcha-container');
-        if (captchaDiv && captchaDiv.getAttribute('data-sitekey')) {
-          return {
-            siteKey: captchaDiv.getAttribute('data-sitekey'),
-            type: 'yandex'
-          };
+      // Yandex SmartCaptcha - более агрессивный поиск
+      if (document.querySelector('script[src*="smartcaptcha.yandexcloud.net"]') ||
+          document.documentElement.outerHTML.includes('smartcaptcha')) {
+
+        // Пробуем найти sitekey в разных местах
+        let siteKey = null;
+
+        // 1. Проверяем data-sitekey в любом элементе
+        const elementWithSitekey = document.querySelector('[data-sitekey]');
+        if (elementWithSitekey) {
+          siteKey = elementWithSitekey.getAttribute('data-sitekey');
         }
-        return { siteKey: null, type: 'yandex' };
+
+        // 2. Ищем в скриптах и inline JavaScript
+        if (!siteKey) {
+          const scripts = Array.from(document.querySelectorAll('script'));
+          for (const script of scripts) {
+            const content = script.textContent || '';
+            const match = content.match(/sitekey['":\s]+['"]([^'"]+)['"]/i) ||
+                         content.match(/data-sitekey['":\s]+['"]([^'"]+)['"]/i);
+            if (match) {
+              siteKey = match[1];
+              break;
+            }
+          }
+        }
+
+        // 3. Ищем в window объекте
+        if (!siteKey && window.smartCaptchaConfig) {
+          siteKey = window.smartCaptchaConfig.sitekey || window.smartCaptchaConfig.siteKey;
+        }
+
+        return { siteKey, type: 'yandex' };
       }
 
       // reCAPTCHA v2
