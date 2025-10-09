@@ -1,6 +1,7 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
 const fetch = require('node-fetch');
+const TwoCaptcha = require('2captcha');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,12 +13,17 @@ const CONFIG = {
   PASSWORD: 'EightLifes8',
   BOT_TOKEN: '8465771110:AAH7D2ThT0RF2EbeLzkxnsvrdUkBmxQbmqc',
   CHAT_ID: '487525838',
-  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbyMKh6Prt9Rf4nd6xmf5n-jqWxlkNg_OE6-9Zp20UUmAZqte0crFpVvonWedCYnXLTA/exec'
+  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbyMKh6Prt9Rf4nd6xmf5n-jqWxlkNg_OE6-9Zp20UUmAZqte0crFpVvonWedCYnXLTA/exec',
+  TWOCAPTCHA_API_KEY: '60441485da02e2db24facdcd5c6ef9d9'
 };
+
+// Инициализация 2Captcha (если указан ключ)
+const solver = CONFIG.TWOCAPTCHA_API_KEY ? new TwoCaptcha.Solver(CONFIG.TWOCAPTCHA_API_KEY) : null;
 
 let browser = null;
 let page = null;
 let isChecking = false;
+let isLoggedIn = false; // Флаг успешной авторизации
 
 // Инициализация браузера (одна сессия на весь процесс)
 async function initBrowser() {
@@ -119,6 +125,79 @@ async function sendTelegramMessage(text) {
   }
 }
 
+// Решение reCAPTCHA через 2Captcha API
+async function solveCaptcha(pageInstance) {
+  if (!solver) {
+    console.log('[CAPTCHA] 2Captcha API ключ не настроен, пропускаем решение');
+    return false;
+  }
+
+  try {
+    console.log('[CAPTCHA] Поиск site-key для reCAPTCHA...');
+
+    // Получаем site-key из iframe или data-атрибута
+    const captchaInfo = await pageInstance.evaluate(() => {
+      const iframe = document.querySelector('iframe[src*="recaptcha"]');
+      if (iframe) {
+        const src = iframe.getAttribute('src');
+        const match = src.match(/k=([^&]+)/);
+        return { siteKey: match ? match[1] : null, type: 'recaptcha_v2' };
+      }
+
+      const recaptchaDiv = document.querySelector('.g-recaptcha');
+      if (recaptchaDiv) {
+        return {
+          siteKey: recaptchaDiv.getAttribute('data-sitekey'),
+          type: 'recaptcha_v2'
+        };
+      }
+
+      return null;
+    });
+
+    if (!captchaInfo || !captchaInfo.siteKey) {
+      console.log('[CAPTCHA] Site-key не найден');
+      return false;
+    }
+
+    console.log(`[CAPTCHA] Site-key найден: ${captchaInfo.siteKey}`);
+    console.log('[CAPTCHA] Отправка задачи на решение (может занять 15-30 секунд)...');
+
+    // Отправляем капчу на решение
+    const result = await solver.recaptcha({
+      pageurl: pageInstance.url(),
+      googlekey: captchaInfo.siteKey
+    });
+
+    console.log(`[CAPTCHA] ✅ Капча решена! ID: ${result.id}`);
+
+    // Вставляем токен на страницу
+    await pageInstance.evaluate((token) => {
+      // Заполняем скрытое поле g-recaptcha-response
+      const textarea = document.querySelector('#g-recaptcha-response');
+      if (textarea) {
+        textarea.innerHTML = token;
+      }
+
+      // Вызываем callback если есть
+      if (window.grecaptcha && typeof window.grecaptcha.getResponse === 'function') {
+        window.___grecaptcha_cfg.clients[0].callback(token);
+      }
+    }, result.data);
+
+    console.log('[CAPTCHA] Токен вставлен на страницу');
+
+    // Небольшая задержка перед продолжением
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    return true;
+
+  } catch (error) {
+    console.error('[CAPTCHA] Ошибка решения капчи:', error.message);
+    return false;
+  }
+}
+
 // Проверка доступности дат
 async function checkDates() {
   if (isChecking) {
@@ -133,85 +212,139 @@ async function checkDates() {
     // Используем одну переиспользуемую страницу
     const { browser: browserInstance, page: pageInstance } = await initBrowser();
 
-    console.log('[CHECK] Переход на страницу авторизации...');
-    await pageInstance.goto(CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Если уже залогинены - просто обновляем страницу
+    if (isLoggedIn) {
+      console.log('[CHECK] Уже авторизованы, обновление страницы...');
+      await pageInstance.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      console.log('[CHECK] Страница обновлена');
+    } else {
+      // Первая авторизация
+      console.log('[CHECK] Переход на страницу авторизации...');
+      await pageInstance.goto(CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    const currentUrl = pageInstance.url();
-    console.log(`[DEBUG] Текущий URL после загрузки: ${currentUrl}`);
+      const currentUrl = pageInstance.url();
+      console.log(`[DEBUG] Текущий URL после загрузки: ${currentUrl}`);
 
-    // Проверяем наличие формы авторизации и других элементов
-    const pageInfo = await pageInstance.evaluate(() => {
-      return {
-        hasLoginForm: document.querySelector('input[name="log"]') !== null,
-        hasPasswordField: document.querySelector('input[name="pwd"]') !== null,
-        hasSubmitButton: document.querySelector('button#wp-submit') !== null,
-        hasCaptcha: document.querySelector('iframe[src*="recaptcha"]') !== null ||
-                    document.querySelector('.g-recaptcha') !== null ||
-                    document.querySelector('[class*="captcha"]') !== null,
-        hasTable: document.querySelector('tr.dates-table__item') !== null,
-        title: document.title,
-        bodyText: document.body.innerText.substring(0, 200)
-      };
-    });
-
-    console.log('[DEBUG] Информация о странице:', JSON.stringify(pageInfo, null, 2));
-
-    if (pageInfo.hasCaptcha) {
-      console.log('[ERROR] 🚨 ОБНАРУЖЕНА CAPTCHA! Автоматическая авторизация невозможна.');
-      throw new Error('CAPTCHA detected on page');
-    }
-
-    if (pageInfo.hasLoginForm) {
-      // Авторизация
-      console.log('[AUTH] Форма авторизации найдена, ввод логина и пароля...');
-      await pageInstance.waitForSelector('input[name="log"]', { timeout: 5000 });
-
-      // Очищаем поля перед вводом
-      await pageInstance.click('input[name="log"]', { clickCount: 3 });
-      await pageInstance.type('input[name="log"]', CONFIG.EMAIL, { delay: 50 });
-
-      await pageInstance.click('input[name="pwd"]', { clickCount: 3 });
-      await pageInstance.type('input[name="pwd"]', CONFIG.PASSWORD, { delay: 50 });
-
-      console.log('[AUTH] Данные введены, проверка кнопки...');
-      const buttonInfo = await pageInstance.evaluate(() => {
-        const btn = document.querySelector('button#wp-submit');
+      // Проверяем наличие формы авторизации и других элементов
+      const pageInfo = await pageInstance.evaluate(() => {
         return {
-          exists: btn !== null,
-          disabled: btn?.disabled,
-          text: btn?.textContent,
-          visible: btn ? window.getComputedStyle(btn).display !== 'none' : false
+          hasLoginForm: document.querySelector('input[name="log"]') !== null,
+          hasPasswordField: document.querySelector('input[name="pwd"]') !== null,
+          hasSubmitButton: document.querySelector('button#wp-submit') !== null,
+          hasCaptcha: document.querySelector('iframe[src*="recaptcha"]') !== null ||
+                      document.querySelector('.g-recaptcha') !== null ||
+                      document.querySelector('[class*="captcha"]') !== null,
+          hasTable: document.querySelector('tr.dates-table__item') !== null,
+          title: document.title,
+          bodyText: document.body.innerText.substring(0, 200)
         };
       });
-      console.log('[AUTH] Информация о кнопке:', JSON.stringify(buttonInfo));
 
-      console.log('[AUTH] Клик по кнопке авторизации...');
+      console.log('[DEBUG] Информация о странице:', JSON.stringify(pageInfo, null, 2));
 
-      try {
-        // Используем race чтобы не зависнуть
-        await Promise.race([
-          pageInstance.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
-          pageInstance.click('button#wp-submit').then(() => new Promise(resolve => setTimeout(resolve, 1000)))
-        ]);
+      if (pageInfo.hasCaptcha) {
+        console.log('[ERROR] 🚨 ОБНАРУЖЕНА CAPTCHA!');
 
-        const newUrl = pageInstance.url();
-        console.log(`[AUTH] Редирект успешен, новый URL: ${newUrl}`);
-      } catch (navError) {
-        console.log(`[AUTH] Navigation timeout, но проверяем текущее состояние...`);
-        const fallbackUrl = pageInstance.url();
-        console.log(`[AUTH] URL после таймаута: ${fallbackUrl}`);
+        // Стратегия 1: Попытка обновить страницу
+        console.log('[CAPTCHA] Стратегия 1: Обновление страницы...');
+        await pageInstance.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        // Проверяем, возможно редирект всё же произошёл
-        if (fallbackUrl !== currentUrl) {
-          console.log('[AUTH] Редирект произошёл несмотря на таймаут');
-        } else {
-          throw navError;
+        const pageInfoAfterReload = await pageInstance.evaluate(() => {
+          return {
+            hasCaptcha: document.querySelector('iframe[src*="recaptcha"]') !== null ||
+                        document.querySelector('.g-recaptcha') !== null ||
+                        document.querySelector('[class*="captcha"]') !== null,
+            hasTable: document.querySelector('tr.dates-table__item') !== null
+          };
+        });
+
+        if (pageInfoAfterReload.hasCaptcha) {
+          console.log('[CAPTCHA] Капча осталась после обновления.');
+
+          // Стратегия 2: Решение через 2Captcha API
+          console.log('[CAPTCHA] Стратегия 2: Попытка решения через 2Captcha API...');
+          const solved = await solveCaptcha(pageInstance);
+
+          if (solved) {
+            console.log('[CAPTCHA] ✅ Капча успешно решена через API!');
+
+            // Проверяем, что таблица теперь доступна
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            const finalCheck = await pageInstance.evaluate(() => {
+              return document.querySelector('tr.dates-table__item') !== null;
+            });
+
+            if (finalCheck) {
+              console.log('[SUCCESS] Таблица доступна после решения капчи');
+              isLoggedIn = true;
+            } else {
+              console.log('[ERROR] Таблица всё ещё недоступна');
+              isLoggedIn = false;
+              throw new Error('CAPTCHA решена, но таблица недоступна');
+            }
+          } else {
+            // Если 2Captcha не настроена или не сработала
+            console.log('[ERROR] Не удалось решить капчу. Сбрасываем флаг авторизации.');
+            isLoggedIn = false;
+            throw new Error('CAPTCHA detected - требуется ручная авторизация или настройка 2Captcha API');
+          }
+        } else if (pageInfoAfterReload.hasTable) {
+          console.log('[SUCCESS] После обновления капча исчезла, таблица доступна');
+          isLoggedIn = true;
         }
+      } else if (pageInfo.hasLoginForm) {
+        // Авторизация
+        console.log('[AUTH] Форма авторизации найдена, ввод логина и пароля...');
+        await pageInstance.waitForSelector('input[name="log"]', { timeout: 5000 });
+
+        // Очищаем поля перед вводом
+        await pageInstance.click('input[name="log"]', { clickCount: 3 });
+        await pageInstance.type('input[name="log"]', CONFIG.EMAIL, { delay: 50 });
+
+        await pageInstance.click('input[name="pwd"]', { clickCount: 3 });
+        await pageInstance.type('input[name="pwd"]', CONFIG.PASSWORD, { delay: 50 });
+
+        console.log('[AUTH] Данные введены, проверка кнопки...');
+        const buttonInfo = await pageInstance.evaluate(() => {
+          const btn = document.querySelector('button#wp-submit');
+          return {
+            exists: btn !== null,
+            disabled: btn?.disabled,
+            text: btn?.textContent,
+            visible: btn ? window.getComputedStyle(btn).display !== 'none' : false
+          };
+        });
+        console.log('[AUTH] Информация о кнопке:', JSON.stringify(buttonInfo));
+
+        console.log('[AUTH] Клик по кнопке авторизации...');
+
+        try {
+          await Promise.race([
+            pageInstance.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+            pageInstance.click('button#wp-submit').then(() => new Promise(resolve => setTimeout(resolve, 1000)))
+          ]);
+
+          const newUrl = pageInstance.url();
+          console.log(`[AUTH] Редирект успешен, новый URL: ${newUrl}`);
+          isLoggedIn = true; // Устанавливаем флаг успешной авторизации
+        } catch (navError) {
+          console.log(`[AUTH] Navigation timeout, но проверяем текущее состояние...`);
+          const fallbackUrl = pageInstance.url();
+          console.log(`[AUTH] URL после таймаута: ${fallbackUrl}`);
+
+          if (fallbackUrl !== currentUrl) {
+            console.log('[AUTH] Редирект произошёл несмотря на таймаут');
+            isLoggedIn = true;
+          } else {
+            throw navError;
+          }
+        }
+      } else if (pageInfo.hasTable) {
+        console.log('[AUTH] Уже на странице с таблицей дат, авторизация не требуется');
+        isLoggedIn = true;
+      } else {
+        console.log('[AUTH] Неизвестное состояние страницы');
       }
-    } else if (pageInfo.hasTable) {
-      console.log('[AUTH] Уже на странице с таблицей дат, авторизация не требуется');
-    } else {
-      console.log('[AUTH] Неизвестное состояние страницы');
     }
 
     console.log('[PARSE] Извлечение дат из таблицы...');
@@ -281,10 +414,35 @@ async function checkDates() {
 
   } catch (error) {
     console.error('[ERROR] Ошибка проверки:', error.message);
+
+    // Если капча или критическая ошибка - сбрасываем флаг авторизации
+    if (error.message.includes('CAPTCHA') || error.message.includes('Navigation timeout')) {
+      console.log('[RESET] Сброс флага авторизации из-за ошибки');
+      isLoggedIn = false;
+    }
+
     return { success: false, error: error.message };
   } finally {
     isChecking = false;
   }
+}
+
+// Периодический сброс сессии каждые 6 часов (для свежести cookies)
+async function resetSession() {
+  console.log('[RESET] Плановый сброс сессии (каждые 6 часов)...');
+  isLoggedIn = false;
+
+  if (page && !page.isClosed()) {
+    try {
+      await page.close();
+      console.log('[RESET] Страница закрыта');
+    } catch (e) {
+      console.log('[RESET] Ошибка при закрытии страницы:', e.message);
+    }
+  }
+
+  page = null;
+  console.log('[RESET] Сессия сброшена, при следующей проверке будет выполнен релогин');
 }
 
 // API endpoints
@@ -333,6 +491,9 @@ app.listen(PORT, async () => {
 
   // Запускаем heartbeat
   setInterval(selfPing, SELF_PING_INTERVAL);
+
+  // Сброс сессии каждые 6 часов
+  setInterval(resetSession, 6 * 60 * 60 * 1000);
 });
 
 // Graceful shutdown
