@@ -349,8 +349,31 @@ async function checkDates() {
 
     console.log('[PARSE] Извлечение дат из таблицы...');
 
-    // Ждем появления таблицы
-    await pageInstance.waitForSelector('tr.dates-table__item', { timeout: 10000 });
+    // Ждем появления таблицы с повторными попытками
+    let tableFound = false;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (!tableFound && attempts < maxAttempts) {
+      try {
+        await pageInstance.waitForSelector('tr.dates-table__item', { timeout: 15000 });
+        tableFound = true;
+        console.log('[PARSE] Таблица найдена');
+      } catch (error) {
+        attempts++;
+        console.log(`[PARSE] Таблица не найдена (попытка ${attempts}/${maxAttempts})`);
+
+        if (attempts < maxAttempts) {
+          console.log('[PARSE] Повторное обновление страницы...');
+          await pageInstance.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Дополнительная пауза
+        } else {
+          console.log('[ERROR] Таблица не найдена после всех попыток. Сброс авторизации.');
+          isLoggedIn = false; // Сбрасываем флаг для повторной авторизации
+          throw new Error('Table not found after multiple reload attempts');
+        }
+      }
+    }
 
     // Извлекаем даты с кнопками "Забронировать время"
     const availableDates = await pageInstance.evaluate(() => {
