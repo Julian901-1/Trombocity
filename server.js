@@ -464,8 +464,18 @@ async function checkDates() {
         console.log('[AUTH] Информация о кнопке:', JSON.stringify(buttonInfo));
 
         // Даём время для загрузки Yandex SmartCaptcha (она загружается асинхронно)
-        console.log('[AUTH] Ожидание загрузки Yandex SmartCaptcha (3 секунды)...');
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        console.log('[AUTH] Ожидание загрузки Yandex SmartCaptcha (5 секунд)...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        // Логируем полный HTML для поиска sitekey
+        const fullHtml = await pageInstance.evaluate(() => document.documentElement.outerHTML);
+        console.log('[DEBUG] ========== ПОЛНЫЙ HTML страницы (первые 5000 символов) ==========');
+        console.log(fullHtml.substring(0, 5000));
+        console.log('[DEBUG] ===============================================================');
+
+        // Ищем все упоминания sitekey в HTML
+        const sitekeyMatches = fullHtml.match(/sitekey['":\s=]+['"]?([a-zA-Z0-9_-]+)['"]?/gi);
+        console.log('[DEBUG] Найденные упоминания sitekey:', sitekeyMatches);
 
         // Всегда пытаемся решить капчу, т.к. она присутствует, но загружается динамически
         console.log('[AUTH] Решение Yandex SmartCaptcha через 2Captcha API...');
