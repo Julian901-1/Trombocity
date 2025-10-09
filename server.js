@@ -257,15 +257,46 @@ async function solveCaptcha(pageInstance) {
     let result;
 
     if (captchaInfo.type === 'yandex') {
-      console.log('[CAPTCHA] Решение Yandex SmartCaptcha через 2Captcha API...');
+      console.log('[CAPTCHA] Решение Yandex SmartCaptcha через 2Captcha API (HTTP)...');
 
-      // Отправляем Yandex SmartCaptcha на решение
-      result = await solver.yandexSmart({
-        pageurl: pageInstance.url(),
-        sitekey: captchaInfo.siteKey
-      });
+      // Отправляем задачу на решение через HTTP API
+      const inUrl = `https://2captcha.com/in.php?key=${CONFIG.TWOCAPTCHA_API_KEY}&method=yandex&sitekey=${captchaInfo.siteKey}&pageurl=${encodeURIComponent(pageInstance.url())}&json=1`;
+      const inResponse = await fetch(inUrl);
+      const inData = await inResponse.json();
 
-      console.log(`[CAPTCHA] ✅ Yandex SmartCaptcha решена! ID: ${result.id}`);
+      if (inData.status !== 1) {
+        console.log('[CAPTCHA] Ошибка отправки задачи:', inData);
+        return false;
+      }
+
+      const taskId = inData.request;
+      console.log(`[CAPTCHA] Задача отправлена, ID: ${taskId}. Ожидание решения (до 60 секунд)...`);
+
+      // Ждём решения (polling)
+      let token = null;
+      for (let i = 0; i < 20; i++) {
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Ждём 5 секунд
+
+        const resUrl = `https://2captcha.com/res.php?key=${CONFIG.TWOCAPTCHA_API_KEY}&action=get&id=${taskId}&json=1`;
+        const resResponse = await fetch(resUrl);
+        const resData = await resResponse.json();
+
+        if (resData.status === 1) {
+          token = resData.request;
+          console.log(`[CAPTCHA] ✅ Yandex SmartCaptcha решена! Токен получен.`);
+          break;
+        } else if (resData.request !== 'CAPCHA_NOT_READY') {
+          console.log('[CAPTCHA] Ошибка решения:', resData);
+          return false;
+        }
+
+        console.log(`[CAPTCHA] Ожидание решения... (попытка ${i + 1}/20)`);
+      }
+
+      if (!token) {
+        console.log('[CAPTCHA] Timeout - капча не решена за 100 секунд');
+        return false;
+      }
 
       // Вставляем токен в hidden input для SmartCaptcha
       await pageInstance.evaluate((token) => {
@@ -302,7 +333,9 @@ async function solveCaptcha(pageInstance) {
         if (window.smartCaptcha && typeof window.smartCaptcha.success === 'function') {
           window.smartCaptcha.success(token);
         }
-      }, result.data);
+      }, token);
+
+      result = { data: token, id: taskId };
 
     } else {
       // reCAPTCHA v2
