@@ -188,7 +188,10 @@ async function initBrowser() {
 async function login() {
   console.log('[AUTH] Начало авторизации');
 
-  await page.goto(CONFIG.URL, { waitUntil: 'networkidle2' });
+  // Проверяем текущий URL - если не на account, переходим
+  if (!page.url().includes('/account')) {
+    await page.goto(CONFIG.URL, { waitUntil: 'networkidle2' });
+  }
 
   // Проверка: уже залогинены?
   const hasAccountInfo = await page.$('.account-info');
@@ -198,22 +201,33 @@ async function login() {
     return true;
   }
 
+  // Проверка наличия формы логина
+  const hasLoginForm = await page.$('input[name="log"]');
+  if (!hasLoginForm) {
+    console.log('[AUTH] Форма логина не найдена, перезагрузка страницы');
+    await page.reload({ waitUntil: 'networkidle2' });
+  }
+
   // Ввод логина и пароля
   await page.waitForSelector('input[name="log"]', { timeout: 5000 });
+
+  // Очищаем поля перед вводом
+  await page.evaluate(() => {
+    document.querySelector('input[name="log"]').value = '';
+    document.querySelector('input[name="pwd"]').value = '';
+  });
+
   await page.type('input[name="log"]', CONFIG.EMAIL);
   await page.type('input[name="pwd"]', CONFIG.PASSWORD);
 
   console.log('[AUTH] Клик по кнопке авторизации');
 
-  // Отслеживаем, что происходит после клика
-  let responseHtml = '';
-  page.on('response', async (response) => {
-    if (response.url().includes('wp-admin/admin-ajax.php') || response.url().includes('account')) {
-      try {
-        responseHtml = await response.text();
-      } catch (e) {}
-    }
-  });
+  // Проверяем наличие кнопки
+  const hasButton = await page.$('button#wp-submit');
+  if (!hasButton) {
+    console.log('[AUTH] ❌ Кнопка не найдена');
+    return false;
+  }
 
   await page.click('button#wp-submit');
 
@@ -246,6 +260,13 @@ async function login() {
       }
       input.value = token;
     }, token);
+
+    // Проверяем кнопку перед повторным кликом
+    const buttonExists = await page.$('button#wp-submit');
+    if (!buttonExists) {
+      console.log('[AUTH] ❌ Кнопка исчезла после решения капчи');
+      return false;
+    }
 
     // Повторная отправка формы с токеном
     console.log('[AUTH] Повторная отправка с токеном');
@@ -282,7 +303,9 @@ async function checkDates() {
     }
   }
 
-  await page.goto(CONFIG.URL, { waitUntil: 'networkidle2' });
+  // Используем reload вместо goto для сохранения сессии
+  console.log('[CHECK] Обновление страницы');
+  await page.reload({ waitUntil: 'networkidle2' });
 
   // Проверяем авторизацию перед извлечением дат
   const stillLoggedIn = await page.$('.account-info');
@@ -293,7 +316,7 @@ async function checkDates() {
     if (!success) {
       throw new Error('Не удалось переавторизоваться');
     }
-    await page.goto(CONFIG.URL, { waitUntil: 'networkidle2' });
+    // После авторизации уже на нужной странице, не нужен goto
   }
 
   // Извлечение дат (ВСЕ даты, не только с кнопками)
