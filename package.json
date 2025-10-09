@@ -4,7 +4,7 @@
   "description": "Donor appointment availability checker",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node --expose-gc server.js"
   },
   "dependencies": {
     "express": "^4.18.2",

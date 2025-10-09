@@ -49,7 +49,8 @@ async function initBrowser() {
         '--no-default-browser-check',
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding'
+        '--disable-renderer-backgrounding',
+        '--js-flags=--max-old-space-size=256' // Ограничение памяти JS до 256MB
       ]
     });
     console.log('[INIT] Браузер запущен');
@@ -84,14 +85,7 @@ async function initBrowser() {
     page.on('request', (req) => {
       const resourceType = req.resourceType();
 
-      // Блокируем капчу Yandex SmartCaptcha
-      if (req.url().includes('smartcaptcha.yandexcloud.net')) {
-        console.log('[CAPTCHA] Блокировка загрузки Yandex SmartCaptcha');
-        req.abort();
-        return;
-      }
-
-      // Блокируем изображения, CSS, шрифты, медиа
+      // Блокируем изображения, CSS, шрифты, медиа (но НЕ SmartCaptcha)
       if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
         req.abort();
       } else {
@@ -220,46 +214,89 @@ async function solveCaptcha(pageInstance) {
 
     console.log(`[CAPTCHA] Тип капчи: ${captchaInfo.type}`);
 
-    if (captchaInfo.type === 'yandex') {
-      console.log('[CAPTCHA] ⚠️ Yandex SmartCaptcha обнаружена');
-      console.log('[CAPTCHA] 2Captcha не поддерживает Yandex SmartCaptcha напрямую');
-      console.log('[CAPTCHA] Стратегия: используем задержку и надежду на отсутствие блокировки');
-
-      // Просто ждём - возможно форма отправится без решения капчи
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      return false; // Возвращаем false, чтобы попытаться другой способ
-    }
-
     if (!captchaInfo.siteKey) {
       console.log('[CAPTCHA] Site-key не найден');
       return false;
     }
 
     console.log(`[CAPTCHA] Site-key найден: ${captchaInfo.siteKey}`);
-    console.log('[CAPTCHA] Отправка задачи на решение (может занять 15-30 секунд)...');
+    console.log('[CAPTCHA] Отправка задачи на решение через 2Captcha (может занять 15-60 секунд)...');
 
-    // Отправляем reCAPTCHA на решение
-    const result = await solver.recaptcha({
-      pageurl: pageInstance.url(),
-      googlekey: captchaInfo.siteKey
-    });
+    let result;
 
-    console.log(`[CAPTCHA] ✅ Капча решена! ID: ${result.id}`);
+    if (captchaInfo.type === 'yandex') {
+      console.log('[CAPTCHA] Решение Yandex SmartCaptcha через 2Captcha API...');
 
-    // Вставляем токен на страницу
-    await pageInstance.evaluate((token) => {
-      const textarea = document.querySelector('#g-recaptcha-response');
-      if (textarea) {
-        textarea.innerHTML = token;
-      }
+      // Отправляем Yandex SmartCaptcha на решение
+      result = await solver.yandexSmart({
+        pageurl: pageInstance.url(),
+        sitekey: captchaInfo.siteKey
+      });
 
-      if (window.grecaptcha && typeof window.grecaptcha.getResponse === 'function') {
-        window.___grecaptcha_cfg.clients[0].callback(token);
-      }
-    }, result.data);
+      console.log(`[CAPTCHA] ✅ Yandex SmartCaptcha решена! ID: ${result.id}`);
+
+      // Вставляем токен в hidden input для SmartCaptcha
+      await pageInstance.evaluate((token) => {
+        // Пробуем найти input с data-testid='smart-token'
+        let tokenInput = document.querySelector("input[data-testid='smart-token']");
+
+        // Если не найден, ищем любой hidden input рядом с captcha-container
+        if (!tokenInput) {
+          const container = document.querySelector('#captcha-container') || document.querySelector('[data-sitekey]');
+          if (container) {
+            tokenInput = container.querySelector('input[type="hidden"]') ||
+                        container.parentElement.querySelector('input[type="hidden"]');
+          }
+        }
+
+        // Если всё ещё не найден, создаём его
+        if (!tokenInput) {
+          tokenInput = document.createElement('input');
+          tokenInput.type = 'hidden';
+          tokenInput.name = 'smart-token';
+          tokenInput.setAttribute('data-testid', 'smart-token');
+          const form = document.querySelector('form');
+          if (form) {
+            form.appendChild(tokenInput);
+          }
+        }
+
+        if (tokenInput) {
+          tokenInput.value = token;
+          console.log('Токен Yandex SmartCaptcha вставлен');
+        }
+
+        // Также пробуем вызвать callback, если есть
+        if (window.smartCaptcha && typeof window.smartCaptcha.success === 'function') {
+          window.smartCaptcha.success(token);
+        }
+      }, result.data);
+
+    } else {
+      // reCAPTCHA v2
+      console.log('[CAPTCHA] Решение reCAPTCHA v2 через 2Captcha API...');
+
+      result = await solver.recaptcha({
+        pageurl: pageInstance.url(),
+        googlekey: captchaInfo.siteKey
+      });
+
+      console.log(`[CAPTCHA] ✅ reCAPTCHA решена! ID: ${result.id}`);
+
+      await pageInstance.evaluate((token) => {
+        const textarea = document.querySelector('#g-recaptcha-response');
+        if (textarea) {
+          textarea.innerHTML = token;
+        }
+
+        if (window.grecaptcha && typeof window.grecaptcha.getResponse === 'function') {
+          window.___grecaptcha_cfg.clients[0].callback(token);
+        }
+      }, result.data);
+    }
 
     console.log('[CAPTCHA] Токен вставлен на страницу');
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     return true;
 
@@ -394,13 +431,32 @@ async function checkDates() {
         });
         console.log('[AUTH] Информация о кнопке:', JSON.stringify(buttonInfo));
 
-        console.log('[AUTH] Клик по кнопке авторизации...');
+        console.log('[AUTH] Попытка обхода капчи через прямую отправку формы...');
 
-        // Кликаем и ждем появления индикатора успешной авторизации
-        await pageInstance.click('button#wp-submit');
+        // Пытаемся отправить форму напрямую через JavaScript (обход капчи)
+        const formSubmitted = await pageInstance.evaluate(() => {
+          const form = document.querySelector('form');
+          if (form) {
+            // Удаляем все обработчики событий submit (включая валидацию капчи)
+            const newForm = form.cloneNode(true);
+            form.parentNode.replaceChild(newForm, form);
 
-        console.log('[AUTH] Ожидание загрузки личного кабинета (3 секунды)...');
-        await new Promise(resolve => setTimeout(resolve, 3000));
+            // Отправляем форму
+            newForm.submit();
+            return true;
+          }
+          return false;
+        });
+
+        if (formSubmitted) {
+          console.log('[AUTH] Форма отправлена через JavaScript');
+        } else {
+          console.log('[AUTH] Не удалось найти форму, используем клик по кнопке');
+          await pageInstance.click('button#wp-submit');
+        }
+
+        console.log('[AUTH] Ожидание загрузки личного кабинета (5 секунд)...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
 
         // Логируем полный HTML страницы после клика
         const htmlAfterClick = await pageInstance.evaluate(() => document.documentElement.outerHTML);
@@ -551,6 +607,12 @@ async function checkDates() {
 
     const duration = Date.now() - startTime;
     console.log(`[CHECK] Проверка завершена за ${duration}ms\n`);
+
+    // Принудительная сборка мусора после успешной проверки
+    if (global.gc) {
+      global.gc();
+      console.log('[MEMORY] Принудительная сборка мусора выполнена');
+    }
 
     return {
       success: true,
