@@ -228,6 +228,7 @@ async function checkDates() {
       // Проверяем наличие формы авторизации и других элементов
       const pageInfo = await pageInstance.evaluate(() => {
         return {
+          hasAccountInfo: document.querySelector('.account-info') !== null,
           hasLoginForm: document.querySelector('input[name="log"]') !== null,
           hasPasswordField: document.querySelector('input[name="pwd"]') !== null,
           hasSubmitButton: document.querySelector('button#wp-submit') !== null,
@@ -242,7 +243,13 @@ async function checkDates() {
 
       console.log('[DEBUG] Информация о странице:', JSON.stringify(pageInfo, null, 2));
 
-      if (pageInfo.hasCaptcha) {
+      // Если уже авторизованы (есть account-info) - пропускаем логин
+      if (pageInfo.hasAccountInfo) {
+        console.log('[AUTH] ✅ Уже авторизованы (найден блок account-info), пропускаем логин');
+        isLoggedIn = true;
+      }
+
+      else if (pageInfo.hasCaptcha) {
         console.log('[ERROR] 🚨 ОБНАРУЖЕНА CAPTCHA!');
 
         // Стратегия 1: Попытка обновить страницу
@@ -318,25 +325,40 @@ async function checkDates() {
 
         console.log('[AUTH] Клик по кнопке авторизации...');
 
+        // Кликаем и ждем появления индикатора успешной авторизации
+        await pageInstance.click('button#wp-submit');
+
+        console.log('[AUTH] Ожидание загрузки личного кабинета...');
+
         try {
-          await Promise.race([
-            pageInstance.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
-            pageInstance.click('button#wp-submit').then(() => new Promise(resolve => setTimeout(resolve, 1000)))
-          ]);
+          // Ждем появления блока с информацией об аккаунте (признак успешной авторизации)
+          await pageInstance.waitForSelector('.account-info', { timeout: 30000 });
+          console.log('[AUTH] ✅ Успешная авторизация - найден блок account-info');
 
-          const newUrl = pageInstance.url();
-          console.log(`[AUTH] Редирект успешен, новый URL: ${newUrl}`);
-          isLoggedIn = true; // Устанавливаем флаг успешной авторизации
-        } catch (navError) {
-          console.log(`[AUTH] Navigation timeout, но проверяем текущее состояние...`);
-          const fallbackUrl = pageInstance.url();
-          console.log(`[AUTH] URL после таймаута: ${fallbackUrl}`);
+          // Проверяем наличие текста группы крови
+          const accountInfo = await pageInstance.evaluate(() => {
+            const accountBlock = document.querySelector('.account-info');
+            return accountBlock ? accountBlock.innerText : '';
+          });
 
-          if (fallbackUrl !== currentUrl) {
-            console.log('[AUTH] Редирект произошёл несмотря на таймаут');
+          console.log(`[AUTH] Информация об аккаунте: ${accountInfo.substring(0, 100)}`);
+          isLoggedIn = true;
+
+        } catch (authError) {
+          console.log('[AUTH] Не удалось дождаться загрузки личного кабинета');
+
+          // Проверяем, возможно уже на правильной странице
+          const hasAccountInfo = await pageInstance.evaluate(() => {
+            return document.querySelector('.account-info') !== null;
+          });
+
+          if (hasAccountInfo) {
+            console.log('[AUTH] Account-info найден при повторной проверке');
             isLoggedIn = true;
           } else {
-            throw navError;
+            console.log('[AUTH] Авторизация не удалась');
+            isLoggedIn = false;
+            throw new Error('Authentication failed - account-info block not found');
           }
         }
       } else if (pageInfo.hasTable) {
@@ -347,7 +369,20 @@ async function checkDates() {
       }
     }
 
-    console.log('[PARSE] Извлечение дат из таблицы...');
+    console.log('[PARSE] Проверка авторизации перед извлечением дат...');
+
+    // Сначала проверяем, что мы действительно авторизованы
+    const isAuthorized = await pageInstance.evaluate(() => {
+      return document.querySelector('.account-info') !== null;
+    });
+
+    if (!isAuthorized) {
+      console.log('[ERROR] Не авторизованы (отсутствует .account-info). Сброс флага.');
+      isLoggedIn = false;
+      throw new Error('Not authorized - account-info block missing');
+    }
+
+    console.log('[PARSE] ✅ Авторизация подтверждена, извлечение дат из таблицы...');
 
     // Ждем появления таблицы с повторными попытками
     let tableFound = false;
@@ -358,19 +393,18 @@ async function checkDates() {
       try {
         await pageInstance.waitForSelector('tr.dates-table__item', { timeout: 15000 });
         tableFound = true;
-        console.log('[PARSE] Таблица найдена');
+        console.log('[PARSE] ✅ Таблица найдена');
       } catch (error) {
         attempts++;
         console.log(`[PARSE] Таблица не найдена (попытка ${attempts}/${maxAttempts})`);
 
         if (attempts < maxAttempts) {
-          console.log('[PARSE] Повторное обновление страницы...');
-          await pageInstance.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Дополнительная пауза
+          console.log('[PARSE] Ожидание 3 секунды перед повторной проверкой...');
+          await new Promise(resolve => setTimeout(resolve, 3000));
         } else {
           console.log('[ERROR] Таблица не найдена после всех попыток. Сброс авторизации.');
-          isLoggedIn = false; // Сбрасываем флаг для повторной авторизации
-          throw new Error('Table not found after multiple reload attempts');
+          isLoggedIn = false;
+          throw new Error('Table not found after multiple attempts');
         }
       }
     }
