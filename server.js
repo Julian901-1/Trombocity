@@ -162,10 +162,11 @@ async function initBrowser() {
   page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
 
-  // Блокировка ресурсов
+  // Блокировка только тяжёлых ресурсов (не блокируем скрипты и XHR)
   await page.setRequestInterception(true);
   page.on('request', (req) => {
-    if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+    const resourceType = req.resourceType();
+    if (['image', 'font', 'media'].includes(resourceType)) {
       req.abort();
     } else {
       req.continue();
@@ -283,24 +284,47 @@ async function checkDates() {
 
   await page.goto(CONFIG.URL, { waitUntil: 'networkidle2' });
 
-  // Извлечение дат
+  // Проверяем авторизацию перед извлечением дат
+  const stillLoggedIn = await page.$('.account-info');
+  if (!stillLoggedIn) {
+    console.log('[CHECK] Сессия истекла, переавторизация...');
+    isLoggedIn = false;
+    const success = await login();
+    if (!success) {
+      throw new Error('Не удалось переавторизоваться');
+    }
+    await page.goto(CONFIG.URL, { waitUntil: 'networkidle2' });
+  }
+
+  // Извлечение дат (ВСЕ даты, не только с кнопками)
   const dates = await page.evaluate(() => {
     const rows = document.querySelectorAll('tr.dates-table__item');
     return Array.from(rows).map(row => {
-      const dateCell = row.querySelector('td:first-child');
-      return dateCell ? dateCell.innerText.trim() : null;
-    }).filter(d => d);
+      const dateCell = row.querySelector('td.table-item__date');
+      if (!dateCell) return null;
+
+      const dateText = dateCell.innerText.trim();
+      // Проверяем, есть ли кнопка "Забронировать" (доступная дата)
+      const hasBookButton = row.querySelector('button.btn-primary') !== null;
+
+      return { date: dateText, available: hasBookButton };
+    }).filter(d => d && d.date);
   });
 
   if (dates.length === 0) {
-    console.log('[CHECK] Нет доступных дат');
+    console.log('[CHECK] Таблица дат не найдена');
     return { newDates: [], allDates: [] };
   }
 
-  console.log(`[CHECK] Найдено дат: ${dates.length}`);
+  // Фильтруем только доступные даты (с кнопкой "Забронировать")
+  const availableDates = dates.filter(d => d.available).map(d => d.date);
+  const allDatesStr = dates.map(d => `${d.date}${d.available ? '✅' : '❌'}`);
 
-  // Проверка новых дат
-  const currentDates = new Set(dates);
+  console.log(`[CHECK] Найдено дат: ${dates.length} (доступных: ${availableDates.length})`);
+  console.log(`[CHECK] Даты: ${allDatesStr.join(', ')}`);
+
+  // Проверка новых доступных дат
+  const currentDates = new Set(availableDates);
   const newDates = [...currentDates].filter(d => !lastDates.has(d));
 
   if (newDates.length > 0 && lastDates.size > 0) {
@@ -311,7 +335,7 @@ async function checkDates() {
   lastDates = currentDates;
   await saveDatesToSheets(currentDates);
 
-  return { newDates, allDates: dates };
+  return { newDates, allDates: availableDates };
 }
 
 // ===========================
