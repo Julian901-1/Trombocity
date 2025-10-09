@@ -431,9 +431,34 @@ async function checkDates() {
         });
         console.log('[AUTH] Информация о кнопке:', JSON.stringify(buttonInfo));
 
-        console.log('[AUTH] Попытка обхода капчи через прямую отправку формы...');
+        // Проверяем наличие капчи и решаем её через 2Captcha API
+        console.log('[AUTH] Проверка наличия Yandex SmartCaptcha...');
+        const captchaDetected = await pageInstance.evaluate(() => {
+          return document.querySelector('div[class*="SmartCaptcha"]') !== null ||
+                 document.querySelector('iframe[src*="smartcaptcha"]') !== null ||
+                 document.querySelector('div[id*="captcha"]') !== null;
+        });
 
-        // Пытаемся отправить форму напрямую через JavaScript (обход капчи)
+        if (captchaDetected) {
+          console.log('[CAPTCHA] Обнаружена Yandex SmartCaptcha, решение через 2Captcha API...');
+          const captchaSolved = await solveCaptcha(pageInstance);
+
+          if (!captchaSolved) {
+            console.log('[ERROR] Не удалось решить капчу');
+            isLoggedIn = false;
+            throw new Error('Failed to solve captcha');
+          }
+
+          console.log('[CAPTCHA] ✅ Капча успешно решена');
+          // Даём время для обработки токена
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else {
+          console.log('[AUTH] Капча не обнаружена');
+        }
+
+        console.log('[AUTH] Отправка формы...');
+
+        // Пытаемся отправить форму напрямую через JavaScript
         const formSubmitted = await pageInstance.evaluate(() => {
           const form = document.querySelector('form');
           if (form) {
