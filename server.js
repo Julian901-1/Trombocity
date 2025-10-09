@@ -173,11 +173,24 @@ async function initBrowser() {
     }
   });
 
-  // Загрузка cookies
+  // Загрузка cookies из Google Sheets
   const cookies = await loadCookies();
   if (cookies.length > 0) {
     await page.setCookie(...cookies);
-    console.log(`[INIT] Загружено ${cookies.length} cookies`);
+    console.log(`[INIT] Загружено ${cookies.length} cookies из Sheets`);
+
+    // Логируем сессионные cookies
+    const sessionCookies = cookies.filter(c =>
+      c.name.includes('wordpress') ||
+      c.name.includes('wp') ||
+      c.name.includes('session') ||
+      c.name.includes('PHPSESSID')
+    );
+    if (sessionCookies.length > 0) {
+      console.log('[INIT] Сессионные cookies:', sessionCookies.map(c => `${c.name}=${c.value.substring(0, 10)}...`).join(', '));
+    }
+  } else {
+    console.log('[INIT] Cookies не найдены в Sheets, потребуется авторизация');
   }
 
   await page.goto(CONFIG.URL, { waitUntil: 'networkidle2', timeout: 30000 });
@@ -279,6 +292,19 @@ async function login() {
 
     // Сохраняем cookies
     const cookies = await page.cookies();
+    console.log(`[AUTH] Сохранение ${cookies.length} cookies`);
+
+    // Логируем важные cookies для отладки
+    const sessionCookies = cookies.filter(c =>
+      c.name.includes('wordpress') ||
+      c.name.includes('wp') ||
+      c.name.includes('session') ||
+      c.name.includes('PHPSESSID')
+    );
+    if (sessionCookies.length > 0) {
+      console.log('[AUTH] Найдены сессионные cookies:', sessionCookies.map(c => c.name).join(', '));
+    }
+
     await saveCookies(cookies);
 
     return true;
@@ -300,20 +326,19 @@ async function checkDates() {
     }
   }
 
-  // Используем reload вместо goto для сохранения сессии
+  // Обновляем страницу для получения свежих данных
   console.log('[CHECK] Обновление страницы');
   await page.reload({ waitUntil: 'networkidle2' });
 
-  // Проверяем авторизацию перед извлечением дат
-  const stillLoggedIn = await page.$('.account-info');
-  if (!stillLoggedIn) {
-    console.log('[CHECK] Сессия истекла, переавторизация...');
+  // Проверяем авторизацию после reload
+  const hasAccountInfo = await page.$('.account-info');
+  if (!hasAccountInfo) {
+    console.log('[CHECK] Сессия истекла после reload, переавторизация...');
     isLoggedIn = false;
     const success = await login();
     if (!success) {
       throw new Error('Не удалось переавторизоваться');
     }
-    // После авторизации уже на нужной странице, не нужен goto
   }
 
   // Извлечение дат (ВСЕ даты, не только с кнопками)
