@@ -60,6 +60,9 @@ async function initBrowser() {
     console.log('[INIT] Создание новой страницы...');
     page = await browser.newPage();
 
+    // Устанавливаем User-Agent реального браузера (обход детекции headless)
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
     // Загружаем cookies из Google Sheets (если есть)
     try {
       const savedCookiesResponse = await fetch(`${CONFIG.SHEETS_URL}?action=getCookies`, {
@@ -76,10 +79,20 @@ async function initBrowser() {
       console.log('[INIT] Cookies не найдены или ошибка загрузки (норма для первого запуска)');
     }
 
-    // Оптимизация: отключаем загрузку изображений, CSS, шрифтов
+    // Оптимизация: отключаем загрузку изображений, CSS, шрифтов, НО РАЗРЕШАЕМ СКРИПТЫ
     await page.setRequestInterception(true);
     page.on('request', (req) => {
-      if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+      const resourceType = req.resourceType();
+
+      // Блокируем капчу Yandex SmartCaptcha
+      if (req.url().includes('smartcaptcha.yandexcloud.net')) {
+        console.log('[CAPTCHA] Блокировка загрузки Yandex SmartCaptcha');
+        req.abort();
+        return;
+      }
+
+      // Блокируем изображения, CSS, шрифты, медиа
+      if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
         req.abort();
       } else {
         req.continue();
