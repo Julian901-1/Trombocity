@@ -136,25 +136,82 @@ async function checkDates() {
     console.log('[CHECK] Переход на страницу авторизации...');
     await pageInstance.goto(CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // Проверяем наличие формы авторизации
-    const loginFormExists = await pageInstance.evaluate(() => {
-      return document.querySelector('input[name="log"]') !== null;
+    const currentUrl = pageInstance.url();
+    console.log(`[DEBUG] Текущий URL после загрузки: ${currentUrl}`);
+
+    // Проверяем наличие формы авторизации и других элементов
+    const pageInfo = await pageInstance.evaluate(() => {
+      return {
+        hasLoginForm: document.querySelector('input[name="log"]') !== null,
+        hasPasswordField: document.querySelector('input[name="pwd"]') !== null,
+        hasSubmitButton: document.querySelector('button#wp-submit') !== null,
+        hasCaptcha: document.querySelector('iframe[src*="recaptcha"]') !== null ||
+                    document.querySelector('.g-recaptcha') !== null ||
+                    document.querySelector('[class*="captcha"]') !== null,
+        hasTable: document.querySelector('tr.dates-table__item') !== null,
+        title: document.title,
+        bodyText: document.body.innerText.substring(0, 200)
+      };
     });
 
-    if (loginFormExists) {
+    console.log('[DEBUG] Информация о странице:', JSON.stringify(pageInfo, null, 2));
+
+    if (pageInfo.hasCaptcha) {
+      console.log('[ERROR] 🚨 ОБНАРУЖЕНА CAPTCHA! Автоматическая авторизация невозможна.');
+      throw new Error('CAPTCHA detected on page');
+    }
+
+    if (pageInfo.hasLoginForm) {
       // Авторизация
       console.log('[AUTH] Форма авторизации найдена, ввод логина и пароля...');
       await pageInstance.waitForSelector('input[name="log"]', { timeout: 5000 });
+
+      // Очищаем поля перед вводом
+      await pageInstance.click('input[name="log"]', { clickCount: 3 });
       await pageInstance.type('input[name="log"]', CONFIG.EMAIL, { delay: 50 });
+
+      await pageInstance.click('input[name="pwd"]', { clickCount: 3 });
       await pageInstance.type('input[name="pwd"]', CONFIG.PASSWORD, { delay: 50 });
 
+      console.log('[AUTH] Данные введены, проверка кнопки...');
+      const buttonInfo = await pageInstance.evaluate(() => {
+        const btn = document.querySelector('button#wp-submit');
+        return {
+          exists: btn !== null,
+          disabled: btn?.disabled,
+          text: btn?.textContent,
+          visible: btn ? window.getComputedStyle(btn).display !== 'none' : false
+        };
+      });
+      console.log('[AUTH] Информация о кнопке:', JSON.stringify(buttonInfo));
+
       console.log('[AUTH] Клик по кнопке авторизации...');
-      await Promise.all([
-        pageInstance.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
-        pageInstance.click('button#wp-submit')
-      ]);
+
+      try {
+        // Используем race чтобы не зависнуть
+        await Promise.race([
+          pageInstance.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+          pageInstance.click('button#wp-submit').then(() => new Promise(resolve => setTimeout(resolve, 1000)))
+        ]);
+
+        const newUrl = pageInstance.url();
+        console.log(`[AUTH] Редирект успешен, новый URL: ${newUrl}`);
+      } catch (navError) {
+        console.log(`[AUTH] Navigation timeout, но проверяем текущее состояние...`);
+        const fallbackUrl = pageInstance.url();
+        console.log(`[AUTH] URL после таймаута: ${fallbackUrl}`);
+
+        // Проверяем, возможно редирект всё же произошёл
+        if (fallbackUrl !== currentUrl) {
+          console.log('[AUTH] Редирект произошёл несмотря на таймаут');
+        } else {
+          throw navError;
+        }
+      }
+    } else if (pageInfo.hasTable) {
+      console.log('[AUTH] Уже на странице с таблицей дат, авторизация не требуется');
     } else {
-      console.log('[AUTH] Уже авторизованы (форма не найдена)');
+      console.log('[AUTH] Неизвестное состояние страницы');
     }
 
     console.log('[PARSE] Извлечение дат из таблицы...');
