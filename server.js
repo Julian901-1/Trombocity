@@ -328,7 +328,14 @@ async function checkDates() {
         // Кликаем и ждем появления индикатора успешной авторизации
         await pageInstance.click('button#wp-submit');
 
-        console.log('[AUTH] Ожидание загрузки личного кабинета...');
+        console.log('[AUTH] Ожидание загрузки личного кабинета (3 секунды)...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Логируем полный HTML страницы после клика
+        const htmlAfterClick = await pageInstance.evaluate(() => document.documentElement.outerHTML);
+        console.log('[DEBUG] ========== HTML ПОСЛЕ КЛИКА (первые 2000 символов) ==========');
+        console.log(htmlAfterClick.substring(0, 2000));
+        console.log('[DEBUG] ===============================================================');
 
         try {
           // Ждем появления блока с информацией об аккаунте (признак успешной авторизации)
@@ -347,12 +354,21 @@ async function checkDates() {
         } catch (authError) {
           console.log('[AUTH] Не удалось дождаться загрузки личного кабинета');
 
-          // Проверяем, возможно уже на правильной странице
-          const hasAccountInfo = await pageInstance.evaluate(() => {
-            return document.querySelector('.account-info') !== null;
+          // Логируем HTML при ошибке
+          const htmlOnError = await pageInstance.evaluate(() => {
+            return {
+              html: document.documentElement.outerHTML.substring(0, 3000),
+              hasAccountInfo: document.querySelector('.account-info') !== null,
+              hasTable: document.querySelector('tr.dates-table__item') !== null,
+              allClasses: Array.from(document.querySelectorAll('[class]')).slice(0, 20).map(el => el.className)
+            };
           });
 
-          if (hasAccountInfo) {
+          console.log('[DEBUG] ========== HTML ПРИ ОШИБКЕ АВТОРИЗАЦИИ ==========');
+          console.log(JSON.stringify(htmlOnError, null, 2));
+          console.log('[DEBUG] ===================================================');
+
+          if (htmlOnError.hasAccountInfo) {
             console.log('[AUTH] Account-info найден при повторной проверке');
             isLoggedIn = true;
           } else {
