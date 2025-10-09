@@ -431,30 +431,23 @@ async function checkDates() {
         });
         console.log('[AUTH] Информация о кнопке:', JSON.stringify(buttonInfo));
 
-        // Проверяем наличие капчи и решаем её через 2Captcha API
-        console.log('[AUTH] Проверка наличия Yandex SmartCaptcha...');
-        const captchaDetected = await pageInstance.evaluate(() => {
-          return document.querySelector('div[class*="SmartCaptcha"]') !== null ||
-                 document.querySelector('iframe[src*="smartcaptcha"]') !== null ||
-                 document.querySelector('div[id*="captcha"]') !== null;
-        });
+        // Даём время для загрузки Yandex SmartCaptcha (она загружается асинхронно)
+        console.log('[AUTH] Ожидание загрузки Yandex SmartCaptcha (3 секунды)...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
-        if (captchaDetected) {
-          console.log('[CAPTCHA] Обнаружена Yandex SmartCaptcha, решение через 2Captcha API...');
-          const captchaSolved = await solveCaptcha(pageInstance);
+        // Всегда пытаемся решить капчу, т.к. она присутствует, но загружается динамически
+        console.log('[AUTH] Решение Yandex SmartCaptcha через 2Captcha API...');
+        const captchaSolved = await solveCaptcha(pageInstance);
 
-          if (!captchaSolved) {
-            console.log('[ERROR] Не удалось решить капчу');
-            isLoggedIn = false;
-            throw new Error('Failed to solve captcha');
-          }
-
-          console.log('[CAPTCHA] ✅ Капча успешно решена');
-          // Даём время для обработки токена
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } else {
-          console.log('[AUTH] Капча не обнаружена');
+        if (!captchaSolved) {
+          console.log('[ERROR] Не удалось решить капчу');
+          isLoggedIn = false;
+          throw new Error('Failed to solve captcha');
         }
+
+        console.log('[CAPTCHA] ✅ Капча успешно решена');
+        // Даём время для обработки токена
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
         console.log('[AUTH] Отправка формы...');
 
