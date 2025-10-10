@@ -374,18 +374,26 @@ async function checkDates() {
       // Проверяем, сохранилась ли авторизация после reload
       const stillLoggedIn = await page.$('.account-info');
       if (!stillLoggedIn) {
-        console.log('[CHECK] ⚠️ Авторизация потеряна после reload');
-        console.log('[CHECK] Попытка переавторизации...');
+        console.log('[CHECK] ⚠️ Авторизация потеряна после reload (WordPress проблема)');
+        console.log('[CHECK] Используем goto вместо reload для полной переавторизации');
+
+        // Сбрасываем флаг и делаем полную переавторизацию через goto
         isLoggedIn = false;
+        await page.goto(CONFIG.URL, { waitUntil: 'networkidle2', timeout: 15000 });
+
         const success = await login();
         if (!success) {
           throw new Error('Не удалось переавторизоваться');
         }
+
+        // После успешной авторизации НЕ делаем reload - используем текущую страницу
+        console.log('[CHECK] Переавторизация успешна, используем текущую страницу');
       } else {
         console.log('[CHECK] ✅ Авторизация сохранилась после reload');
       }
     } catch (err) {
       console.log('[CHECK] Ошибка reload:', err.message);
+      // При ошибке просто используем текущую страницу без reload
     }
   }
 
