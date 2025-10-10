@@ -290,7 +290,7 @@ async function login() {
     console.log('[AUTH] ✅ Успешно');
     isLoggedIn = true;
 
-    // Сохраняем cookies
+    // Сохраняем cookies в Sheets
     const cookies = await page.cookies();
     console.log(`[AUTH] Сохранение ${cookies.length} cookies`);
 
@@ -306,6 +306,21 @@ async function login() {
     }
 
     await saveCookies(cookies);
+    console.log('[AUTH] Cookies сохранены в Sheets');
+
+    // КРИТИЧНО: Обновляем cookies в текущем браузере
+    // Это гарантирует, что reload() будет использовать свежие cookies, а не старые из памяти
+    console.log('[AUTH] Обновление cookies в браузере...');
+
+    // Удаляем все старые cookies
+    const oldCookies = await page.cookies();
+    for (const cookie of oldCookies) {
+      await page.deleteCookie(cookie);
+    }
+
+    // Устанавливаем свежие cookies
+    await page.setCookie(...cookies);
+    console.log('[AUTH] ✅ Cookies обновлены в браузере (reload теперь сохранит сессию)');
 
     return true;
   }
@@ -326,18 +341,51 @@ async function checkDates() {
     }
   }
 
-  // Обновляем страницу для получения свежих данных
-  console.log('[CHECK] Обновление страницы');
-  await page.reload({ waitUntil: 'networkidle2' });
+  // Проверяем, залогинены ли мы (без reload)
+  let hasAccountInfo = await page.$('.account-info');
 
-  // Проверяем авторизацию после reload
-  const hasAccountInfo = await page.$('.account-info');
   if (!hasAccountInfo) {
-    console.log('[CHECK] Сессия истекла после reload, переавторизация...');
+    console.log('[CHECK] Не залогинены, переавторизация...');
     isLoggedIn = false;
     const success = await login();
     if (!success) {
-      throw new Error('Не удалось переавторизоваться');
+      throw new Error('Не удалось авторизоваться');
+    }
+    hasAccountInfo = await page.$('.account-info');
+  }
+
+  // ТОЛЬКО после успешной проверки авторизации делаем reload для получения свежих дат
+  if (hasAccountInfo) {
+    console.log('[CHECK] Обновление данных через reload');
+
+    // Логируем cookies ПЕРЕД reload
+    const cookiesBeforeReload = await page.cookies();
+    const wpCookiesBefore = cookiesBeforeReload.filter(c => c.name.includes('wordpress_logged_in'));
+    console.log(`[CHECK] Cookies перед reload: ${cookiesBeforeReload.length} (WP logged_in: ${wpCookiesBefore.length})`);
+
+    try {
+      await page.reload({ waitUntil: 'networkidle2', timeout: 15000 });
+
+      // Логируем cookies ПОСЛЕ reload
+      const cookiesAfterReload = await page.cookies();
+      const wpCookiesAfter = cookiesAfterReload.filter(c => c.name.includes('wordpress_logged_in'));
+      console.log(`[CHECK] Cookies после reload: ${cookiesAfterReload.length} (WP logged_in: ${wpCookiesAfter.length})`);
+
+      // Проверяем, сохранилась ли авторизация после reload
+      const stillLoggedIn = await page.$('.account-info');
+      if (!stillLoggedIn) {
+        console.log('[CHECK] ⚠️ Авторизация потеряна после reload');
+        console.log('[CHECK] Попытка переавторизации...');
+        isLoggedIn = false;
+        const success = await login();
+        if (!success) {
+          throw new Error('Не удалось переавторизоваться');
+        }
+      } else {
+        console.log('[CHECK] ✅ Авторизация сохранилась после reload');
+      }
+    } catch (err) {
+      console.log('[CHECK] Ошибка reload:', err.message);
     }
   }
 
