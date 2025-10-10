@@ -162,6 +162,9 @@ async function initBrowser() {
   page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
 
+  // Устанавливаем стабильный User-Agent (WordPress проверяет его)
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
   // Блокировка только тяжёлых ресурсов (не блокируем скрипты и XHR)
   await page.setRequestInterception(true);
   page.on('request', (req) => {
@@ -354,46 +357,33 @@ async function checkDates() {
     hasAccountInfo = await page.$('.account-info');
   }
 
-  // ТОЛЬКО после успешной проверки авторизации делаем reload для получения свежих дат
+  // Обновляем страницу для получения свежих дат
   if (hasAccountInfo) {
-    console.log('[CHECK] Обновление данных через reload');
-
-    // Логируем cookies ПЕРЕД reload
-    const cookiesBeforeReload = await page.cookies();
-    const wpCookiesBefore = cookiesBeforeReload.filter(c => c.name.includes('wordpress_logged_in'));
-    console.log(`[CHECK] Cookies перед reload: ${cookiesBeforeReload.length} (WP logged_in: ${wpCookiesBefore.length})`);
+    console.log('[CHECK] Обновление страницы через reload');
 
     try {
       await page.reload({ waitUntil: 'networkidle2', timeout: 15000 });
 
-      // Логируем cookies ПОСЛЕ reload
-      const cookiesAfterReload = await page.cookies();
-      const wpCookiesAfter = cookiesAfterReload.filter(c => c.name.includes('wordpress_logged_in'));
-      console.log(`[CHECK] Cookies после reload: ${cookiesAfterReload.length} (WP logged_in: ${wpCookiesAfter.length})`);
-
       // Проверяем, сохранилась ли авторизация после reload
       const stillLoggedIn = await page.$('.account-info');
       if (!stillLoggedIn) {
-        console.log('[CHECK] ⚠️ Авторизация потеряна после reload (WordPress проблема)');
-        console.log('[CHECK] Используем goto вместо reload для полной переавторизации');
+        console.log('[CHECK] ⚠️ Авторизация потеряна после reload');
+        console.log('[CHECK] Это проблема WordPress - cookies есть, но сессия сброшена');
 
-        // Сбрасываем флаг и делаем полную переавторизацию через goto
+        // Переавторизация через goto (с капчей)
         isLoggedIn = false;
         await page.goto(CONFIG.URL, { waitUntil: 'networkidle2', timeout: 15000 });
-
         const success = await login();
         if (!success) {
           throw new Error('Не удалось переавторизоваться');
         }
-
-        // После успешной авторизации НЕ делаем reload - используем текущую страницу
-        console.log('[CHECK] Переавторизация успешна, используем текущую страницу');
+        console.log('[CHECK] Переавторизация успешна');
       } else {
         console.log('[CHECK] ✅ Авторизация сохранилась после reload');
       }
     } catch (err) {
       console.log('[CHECK] Ошибка reload:', err.message);
-      // При ошибке просто используем текущую страницу без reload
+      throw err;
     }
   }
 
